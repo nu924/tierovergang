@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Matte – 1 til 20</title>
+  <style>
+    :root{--bg:#0f172a;--card:#111827;--text:#e5e7eb;--muted:#94a3b8;--btn:#1f2937;--btn2:#334155;--ok:#065f46;}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--bg);color:var(--text);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+    .wrap{width:min(860px,92vw);background:var(--card);border:1px solid rgba(255,255,255,.08);border-radius:16px;
+      padding:22px;box-shadow:0 12px 30px rgba(0,0,0,.35);text-align:center}
+    .task{font-size:clamp(44px,7vw,84px);font-weight:900;letter-spacing:.5px;padding:18px 10px;margin:6px 0 10px;user-select:none}
+    .meta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;align-items:center;color:var(--muted);font-size:16px;margin-bottom:12px}
+    .controls{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin:10px 0 8px}
+    button,select{border:1px solid rgba(255,255,255,.12);background:var(--btn);color:var(--text);
+      padding:12px 14px;border-radius:12px;font-size:16px;cursor:pointer;outline:none}
+    button:hover,select:hover{background:var(--btn2)}
+    button:active{transform:translateY(1px)}
+    .auto-on{background:var(--ok);border-color:rgba(255,255,255,.18)}
+    .panel{margin-top:14px;text-align:left;border-top:1px solid rgba(255,255,255,.10);padding-top:14px;display:none}
+    .panel.show{display:block}
+    .grid{display:grid;gap:12px;grid-template-columns:1fr}
+    @media (min-width:860px){.grid{grid-template-columns: 1fr 1fr}}
+    .card{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:14px}
+    .h{font-weight:800;margin:0 0 8px}
+    .ans{font-size:22px;font-weight:900}
+    .small{color:var(--muted);font-size:14px;line-height:1.35}
+    .tip{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+      font-size:14px;white-space:pre-wrap;line-height:1.35}
+    svg{width:100%;height:auto;display:block}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="task" id="task">Trykk “Ny oppgave”</div>
+
+    <div class="meta">
+      <div><strong>Antall oppgaver vist:</strong> <span id="count">0</span></div>
+      <div>
+        <label for="mode"><strong>Modus:</strong></label>
+        <select id="mode" aria-label="Modus">
+          <option value="mix">Blandet</option>
+          <option value="add">Bare addisjon</option>
+          <option value="sub">Bare subtraksjon</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="newBtn">Ny oppgave</button>
+      <button id="solutionBtn">Fasit + forklaring</button>
+      <button id="resetBtn">Nullstill</button>
+      <button id="autoBtn" title="Starter/stopper ny oppgave hvert 3. sekund">Auto</button>
+    </div>
+
+    <div class="panel" id="panel">
+      <div class="grid">
+        <div class="card">
+          <p class="h">Fasit</p>
+          <div class="ans" id="answer">–</div>
+          <div class="small" id="exprSmall"></div>
+        </div>
+        <div class="card">
+          <p class="h">Tallinje</p>
+          <div id="numberline"></div>
+          <div class="small">Start ved første tallet og “hopp” bortover.</div>
+        </div>
+        <div class="card" style="grid-column:1 / -1;">
+          <p class="h">Tips til hoderegning</p>
+          <div class="tip" id="tips">–</div>
+          <div class="small">Tipsene er forslag – dere kan velge metoden som føles best.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const taskEl = document.getElementById('task');
+    const countEl = document.getElementById('count');
+    const modeEl = document.getElementById('mode');
+    const newBtn = document.getElementById('newBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const autoBtn = document.getElementById('autoBtn');
+    const solutionBtn = document.getElementById('solutionBtn');
+
+    const panel = document.getElementById('panel');
+    const answerEl = document.getElementById('answer');
+    const exprSmallEl = document.getElementById('exprSmall');
+    const numberlineEl = document.getElementById('numberline');
+    const tipsEl = document.getElementById('tips');
+
+    let count = 0;
+    let autoTimer = null;
+
+    // Current task: {op:'+'|'-', a, b, res}
+    let cur = null;
+
+    const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+    // --- Oppgaver (kun tall 1–20, og resultat 1–20) ---
+    function makeAddition() {
+      const sum = randInt(2, 20);        // minimum 2 => a,b blir >=1
+      const a = randInt(1, sum - 1);
+      const b = sum - a;
+      return { op: '+', a, b, res: sum };
+    }
+
+    function makeSubtraction() {
+      const a = randInt(2, 20);          // minimum 2 => b kan bli >=1 og resultat >=1
+      const b = randInt(1, a - 1);
+      return { op: '-', a, b, res: a - b };
+    }
+
+    function formatTask(t) {
+      return `${t.a} ${t.op === '+' ? '+' : '\u2212'} ${t.b} =`;
+    }
+
+    function nextTask() {
+      const mode = modeEl.value;
+      if (mode === 'add') cur = makeAddition();
+      else if (mode === 'sub') cur = makeSubtraction();
+      else cur = (Math.random() < 0.5) ? makeAddition() : makeSubtraction();
+
+      taskEl.textContent = formatTask(cur);
+      count++;
+      countEl.textContent = count;
+
+      // skjul forklaring når ny oppgave kommer
+      panel.classList.remove('show');
+      solutionBtn.textContent = 'Fasit + forklaring';
+    }
+
+    function resetAll() {
+      count = 0;
+      countEl.textContent = '0';
+      taskEl.textContent = 'Trykk “Ny oppgave”';
+      cur = null;
+      panel.classList.remove('show');
+      solutionBtn.textContent = 'Fasit + forklaring';
+      stopAuto();
+    }
+
+    // --- Auto ---
+    function startAuto() {
+      if (autoTimer) return;
+      autoBtn.classList.add('auto-on');
+      autoBtn.textContent = 'Auto: på';
+      autoTimer = setInterval(nextTask, 3000);
+      nextTask();
+    }
+
+    function stopAuto() {
+      if (!autoTimer) return;
+      clearInterval(autoTimer);
+      autoTimer = null;
+      autoBtn.classList.remove('auto-on');
+      autoBtn.textContent = 'Auto';
+    }
+
+    // --- Tips (hoderegning) ---
+    function targets() { return { five:[5,10,15,20], ten:[10,20] }; }
+
+    function nearest(arr, x) {
+      let best = arr[0], bestD = Math.abs(x - arr[0]);
+      for (const v of arr) {
+        const d = Math.abs(x - v);
+        if (d < bestD) { best = v; bestD = d; }
+      }
+      return best;
+    }
+
+    function tipsForAddition(a, b) {
+      const out = [];
+
+      // Del opp i 10 + enere (dersom det passer)
+      const tens = Math.floor(b / 10) * 10;
+      const ones = b % 10;
+      if (tens > 0 && ones > 0) out.push(`Del opp:\n${a} + ${b} = (${a} + ${tens}) + ${ones}`);
+
+      // Lag 10 (dersom mulig)
+      if (a < 10) {
+        const need = 10 - a;
+        if (need >= 1 && need <= b) {
+          out.push(`Lag 10:\n${a} + ${b} = (${a} + ${need}) + ${b - need} = 10 + ${b - need}`);
+        }
+      }
+
+      // Rund av til nærmeste 5/10 (kun når justeringen er liten)
+      const { five, ten } = targets();
+      const t10 = nearest(ten, a);
+      const d10 = t10 - a;
+      if (d10 !== 0 && Math.abs(d10) <= 2 && (b - d10) >= 1 && (b - d10) <= 20) {
+        out.push(`Rund av til 10:\n${a} + ${b} = ${t10} + ${b - d10} (juster ${d10 > 0 ? 'ned' : 'opp'})`);
+      }
+      const t5 = nearest(five, a);
+      const d5 = t5 - a;
+      if (d5 !== 0 && Math.abs(d5) <= 2 && (b - d5) >= 1 && (b - d5) <= 20) {
+        out.push(`Rund av til 5:\n${a} + ${b} = ${t5} + ${b - d5} (juster ${d5 > 0 ? 'ned' : 'opp'})`);
+      }
+
+      if (out.length === 0) out.push(`Tell smart:\nStart på ${a} og hopp ${b} frem på tallinja.`);
+
+      return out.slice(0,3).join('\n\n');
+    }
+
+    function tipsForSubtraction(a, b) {
+      const out = [];
+
+      // Del opp b
+      const tens = Math.floor(b / 10) * 10;
+      const ones = b % 10;
+      if (tens > 0 && ones > 0) out.push(`Del opp:\n${a} − ${b} = (${a} − ${tens}) − ${ones}`);
+
+      // Til 10 først (når a > 10 og b er stor nok)
+      if (a > 10) {
+        const down = a - 10;
+        if (down >= 1 && down <= b) {
+          out.push(`Til 10 først:\n${a} − ${b} = (${a} − ${down}) − ${b - down} = 10 − ${b - down}`);
+        }
+      }
+
+      // Rund av b til nærmeste 5/10 (små justeringer)
+      const { five, ten } = targets();
+      const b10 = nearest(ten, b);
+      const db10 = b10 - b;
+      if (db10 !== 0 && Math.abs(db10) <= 2) {
+        out.push(`Rund av:\n${a} − ${b} = (${a} − ${b10}) ${db10 > 0 ? '+ ' + db10 : '− ' + Math.abs(db10)}`);
+      }
+      const b5 = nearest(five, b);
+      const db5 = b5 - b;
+      if (db5 !== 0 && Math.abs(db5) <= 2) {
+        out.push(`Rund av til 5:\n${a} − ${b} = (${a} − ${b5}) ${db5 > 0 ? '+ ' + db5 : '− ' + Math.abs(db5)}`);
+      }
+
+      if (out.length === 0) out.push(`Tell bakover:\nStart på ${a} og gå ${b} tilbake på tallinja.`);
+
+      return out.slice(0,3).join('\n\n');
+    }
+
+    // --- Tallinje (0–20 som ramme) ---
+    function renderNumberLine(t) {
+      const min = 0, max = 20;
+      const W = 760, H = 120, pad = 28;
+      const x = (v) => pad + (v - min) * ((W - 2*pad) / (max - min));
+      const yLine = 58;
+
+      const start = t.a;
+      const end = t.res;
+      const opLabel = (t.op === '+') ? `+${t.b}` : `−${t.b}`;
+
+      const jump = Math.abs(end - start);
+      const arcUp = Math.max(18, Math.min(40, 12 + jump * 2));
+      const path = `M ${x(start)} ${yLine} Q ${(x(start)+x(end))/2} ${yLine - arcUp} ${x(end)} ${yLine}`;
+
+      let ticks = '';
+      for (let v = min; v <= max; v++) {
+        const xx = x(v);
+        const big = (v % 5 === 0);
+        ticks += `
+          <line x1="${xx}" y1="${yLine- (big?10:6)}" x2="${xx}" y2="${yLine+ (big?10:6)}" stroke="rgba(229,231,235,.8)" stroke-width="${big?2:1}"/>
+          <text x="${xx}" y="${yLine+30}" text-anchor="middle" font-size="12" fill="rgba(148,163,184,.95)">${v}</text>
+        `;
+      }
+
+      numberlineEl.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Tallinje">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="rgba(229,231,235,.9)"></path>
+          </marker>
+        </defs>
+
+        <line x1="${x(min)}" y1="${yLine}" x2="${x(max)}" y2="${yLine}" stroke="rgba(229,231,235,.7)" stroke-width="3" />
+        ${ticks}
+
+        <circle cx="${x(start)}" cy="${yLine}" r="7" fill="rgba(229,231,235,.95)"></circle>
+        <circle cx="${x(end)}" cy="${yLine}" r="7" fill="rgba(229,231,235,.95)"></circle>
+
+        <path d="${path}" fill="none" stroke="rgba(229,231,235,.9)" stroke-width="3" marker-end="url(#arrow)"></path>
+
+        <text x="${(x(start)+x(end))/2}" y="${yLine - arcUp - 6}" text-anchor="middle"
+              font-size="14" fill="rgba(229,231,235,.95)" font-weight="700">${opLabel}</text>
+
+        <text x="${x(start)}" y="${yLine - 16}" text-anchor="middle" font-size="12" fill="rgba(148,163,184,.95)">start</text>
+        <text x="${x(end)}" y="${yLine - 16}" text-anchor="middle" font-size="12" fill="rgba(148,163,184,.95)">slutt</text>
+      </svg>`;
+    }
+
+    function toggleSolution() {
+      if (!cur) return;
+      const isOpen = panel.classList.toggle('show');
+      solutionBtn.textContent = isOpen ? 'Skjul fasit' : 'Fasit + forklaring';
+
+      if (isOpen) {
+        answerEl.textContent = `${cur.res}`;
+        exprSmallEl.textContent = `${cur.a} ${cur.op === '+' ? '+' : '\u2212'} ${cur.b} = ${cur.res}`;
+        renderNumberLine(cur);
+        tipsEl.textContent = (cur.op === '+') ? tipsForAddition(cur.a, cur.b) : tipsForSubtraction(cur.a, cur.b);
+      }
+    }
+
+    // Events
+    newBtn.addEventListener('click', nextTask);
+    resetBtn.addEventListener('click', resetAll);
+    autoBtn.addEventListener('click', () => autoTimer ? stopAuto() : startAuto());
+    solutionBtn.addEventListener('click', toggleSolution);
+
+    // Tastatur: Space=ny, Esc=nullstill, A=auto, F=fasit
+    window.addEventListener('keydown', (e) => {
+      if (e.key === ' ') { e.preventDefault(); nextTask(); }
+      if (e.key === 'Escape') resetAll();
+      if (e.key.toLowerCase() === 'a') autoTimer ? stopAuto() : startAuto();
+      if (e.key.toLowerCase() === 'f') toggleSolution();
+    });
+  </script>
+</body>
+</html>
